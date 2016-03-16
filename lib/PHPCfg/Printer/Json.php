@@ -14,13 +14,13 @@ use PHPCfg\Printer;
 class Json extends Printer {
     protected function renderOp(\PHPCfg\Op $op) {
         $result = $op->getType();
-        if ($op instanceof Op\CallableOp) {
+        if ($op instanceof \PHPCfg\Op\CallableOp) {
             $result .= '<' . $op->name->value . '>';
             foreach ($op->getParams() as $key => $param) {
-                $result .= $this->indent("\nParam[$key]: " . $this->renderOperand($param->result));
+                $result .= $this->indent("\nparams: " . $this->renderOperand($param->result));
             }
         }
-        if ($op instanceof Op\Expr\Assertion) {
+        if ($op instanceof \PHPCfg\Op\Expr\Assertion) {
             $result .= "<" . $this->renderAssertion($op->assertion) . ">";
         }
         foreach ($op->getVariableNames() as $varName) {
@@ -33,7 +33,7 @@ class Json extends Printer {
                     continue;
                 }
                 $result .= "\n    $varName: ";
-                $result .= $this->indent($this->renderOperand($var));
+                $result .= $this->renderOperand($var);
             }
         }
         $childBlocks = [];
@@ -71,7 +71,13 @@ class Json extends Printer {
         foreach ($operand as $val) {
             $temp = array_map(trim,split(":",$val));
             if (count($temp)>1) {
-                $output[$temp[0]] = $temp[1];
+                if (isset($output[$temp[0]])) {
+                    $tmp = array($output[$temp[0]]);
+                    array_push($tmp,$temp[1]);
+                    $output[$temp[0]] = $tmp;
+                } else {
+                    $output[$temp[0]] = $temp[1];
+                }
             }
         }
         return $output;
@@ -97,6 +103,10 @@ class Json extends Printer {
                     $operand['startLine'] = $attributes['startLine'];
                     $operand['endLine'] = $attributes['endLine'];
                     $operand['file'] = $attributes['filename'];
+                } else {
+                    $operand['file'] = "None";
+                    $operand['startLine'] = "None";
+                    $operand['endLine'] = "None";
                 }
                 foreach ($op['childBlocks'] as $child) {
                     $operand[$child['name']] = "Block#" . $rendered['blockIds'][$child['block']];
