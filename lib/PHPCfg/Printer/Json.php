@@ -15,7 +15,9 @@ class Json extends Printer {
     protected function renderOp(\PHPCfg\Op $op) {
         $result = $op->getType();
         if ($op instanceof \PHPCfg\Op\CallableOp) {
-            $result .= '<' . $op->name->value . '>';
+            if (isset($op->name->value)) {
+                $result .= '<' . $op->name->value . '>';
+            }
             foreach ($op->getParams() as $key => $param) {
                 $result .= $this->indent("\nparams: " . $this->renderOperand($param->result));
             }
@@ -69,7 +71,7 @@ class Json extends Printer {
         $output = array();
         $output['operand'] = $expr;
         foreach ($operand as $val) {
-            $temp = array_map(trim,split(":",$val));
+            $temp = array_map(trim,explode(":",$val,2));
             if (count($temp)>1) {
                 if (isset($output[$temp[0]])) {
                     $tmp = array($output[$temp[0]]);
