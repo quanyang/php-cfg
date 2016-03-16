@@ -38,7 +38,6 @@ abstract class Printer {
     }
 
     protected function renderOperand(Operand $var) {
-        $id = $this->getVarId($var);
         $type = isset($var->type) ? "<{$var->type}>" : "";
         if ($var instanceof Literal) {
             return "LITERAL{$type}(" . var_export($var->value, true) . ")";
@@ -65,6 +64,7 @@ abstract class Printer {
             
             return $prefix . $var->name->value . $type;
         } elseif ($var instanceof Temporary) {
+            $id = $this->getVarId($var);
             if ($var->original) {
                 return "Var{$type}#$id" . "<" . $this->renderOperand($var->original) . ">";
             }
@@ -82,7 +82,9 @@ abstract class Printer {
     protected function renderOp(Op $op) {
         $result = $op->getType();
         if ($op instanceof Op\CallableOp) {
-            $result .= '<' . $op->name->value . '>';
+            if (isset($op->name)) {
+                $result .= '<' . $op->name->value . '>';
+            }
             foreach ($op->getParams() as $key => $param) {
                 $result .= $this->indent("\nParam[$key]: " . $this->renderOperand($param->result));
             }
@@ -192,17 +194,6 @@ abstract class Printer {
                 ];
             }
             foreach ($block->children as $child) {
-                if ($child instanceof Op\CallableOp) {
-                    // render the params into the ops
-                    foreach ($child->getParams() as $idx => $param) {
-                        $renderedOps[$param] = [
-                            "op"          => $param,
-                            "label"       => "Param({$child->name->value})[$idx]: " . $this->renderOperand($param->result),
-                            "childBlocks" => [],
-                        ];
-                    }
-
-                }
                 $renderedOps[$child] = $ops[] = $this->renderOp($child);
             }
             $renderedBlocks[$block] = $ops;

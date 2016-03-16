@@ -1,0 +1,37 @@
+<?php
+const A = 1, B = 2;
+class C {
+    const D = 3, E = 4;
+}
+var_dump(A, C::D);
+-----
+Block#1
+    Terminal_Const
+        name: LITERAL('A')
+        value: LITERAL(1)
+    Terminal_Const
+        name: LITERAL('B')
+        value: LITERAL(2)
+    Stmt_Class
+        name: LITERAL('C')
+        stmts: Block#2
+    Expr_ConstFetch
+        name: LITERAL('A')
+        result: Var#1
+    Expr_ClassConstFetch
+        class: LITERAL('C')
+        name: LITERAL('D')
+        result: Var#2
+    Expr_FuncCall
+        name: LITERAL('var_dump')
+        args: Var#1
+        args: Var#2
+        result: Var#3
+
+Block#2
+    Terminal_Const
+        name: LITERAL('c::D')
+        value: LITERAL(3)
+    Terminal_Const
+        name: LITERAL('c::E')
+        value: LITERAL(4)
