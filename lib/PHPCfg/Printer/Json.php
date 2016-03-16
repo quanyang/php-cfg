@@ -109,7 +109,14 @@ class Json extends Printer {
                     $operand['endLine'] = "None";
                 }
                 foreach ($op['childBlocks'] as $child) {
-                    $operand[$child['name']] = "Block#" . $rendered['blockIds'][$child['block']];
+                    if (array_key_exists($child['name'], $operand)) {
+                        if (!is_array($operand[$child['name']])) {
+                            $operand[$child['name']] = array($operand[$child['name']]);
+                        }
+                        array_push($operand[$child['name']],"Block#" . $rendered['blockIds'][$child['block']]);
+                    } else {
+                        $operand[$child['name']] = "Block#" . $rendered['blockIds'][$child['block']];
+                    }
                 }
                 array_push($operand_,$operand);
             }
