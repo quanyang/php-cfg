@@ -35,7 +35,7 @@ class Json extends Printer {
                     continue;
                 }
                 $result .= "\n    $varName: ";
-                $result .= $this->renderOperand($var);
+                $result .= str_replace(array("\n","\r",'"'),array('\\\\n','\\\\r','\\"'),$this->renderOperand($var));
             }
         }
         $childBlocks = [];
