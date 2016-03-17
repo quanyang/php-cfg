@@ -96,15 +96,17 @@ abstract class Printer {
         }
         foreach ($op->getVariableNames() as $varName) {
             $vars = $op->$varName;
-            if (!is_array($vars)) {
-                $vars = [$vars];
-            }
-            foreach ($vars as $var) {
-                if (!$var) {
-                    continue;
+            if (is_array($vars)) {
+                foreach ($vars as $key => $var) {
+                    if (!$var) {
+                        continue;
+                    }
+                    $result .= "\n    {$varName}[$key]: ";
+                    $result .= $this->indent($this->renderOperand($var));
                 }
+            } elseif ($vars) {
                 $result .= "\n    $varName: ";
-                $result .= $this->indent($this->renderOperand($var));
+                $result .= $this->indent($this->renderOperand($vars));
             }
         }
         $childBlocks = [];
@@ -179,11 +181,9 @@ abstract class Printer {
             $block = $this->blockQueue->dequeue();
             $ops = [];
             foreach ($block->phi as $phi) {
-                $result = $this->indent("Phi<" . $this->renderOperand($phi->result) . ">: = [");
-                foreach ($phi->vars as $sub) {
-                    $result .= $this->renderOperand($sub)  . ',';
-                }
-                $result .= ']';
+                $result = $this->indent($this->renderOperand($phi->result) . " = Phi(");
+                $result .= implode(', ', array_map([$this, 'renderOperand'], $phi->vars));
+                $result .= ')';
                 $renderedOps[$phi] = $ops[] = [
                     "op"          => $phi,
                     "label"       => $result,

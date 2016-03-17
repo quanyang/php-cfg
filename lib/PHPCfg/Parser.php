@@ -464,7 +464,7 @@ class Parser {
                 $block->children[] = new Op\Stmt\Jump($caseBlock);
                 $caseBlock->addParent($block);
             }
-            $cases[] = [$this->parseExprNode($case->cond)];
+            $cases[] = $this->parseExprNode($case->cond);
             $block = $this->parseNodes($case->stmts, $caseBlock);
         }
         $this->block->children[] = new Op\Stmt\Switch_($cond, $cases, $targets, $this->mapAttributes($node));
@@ -1112,7 +1112,7 @@ class Parser {
         $phi = new Op\Phi($result, ['block' => $this->block]);
         $phi->addOperand(new Literal($isOr));
         $phi->addOperand($boolCast->result);
-        $this->block->children[] = $phi;
+        $this->block->phi[] = $phi;
 
         $mode = $isOr ? Assertion::MODE_UNION : Assertion::MODE_INTERSECTION;
         foreach ($left->assertions as $assert) {

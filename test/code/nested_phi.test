@@ -15,9 +15,9 @@ Block#1
         expr: LITERAL(1)
         result: Var#2
     Expr_Array
-        values: LITERAL(1)
-        values: LITERAL(2)
-        values: LITERAL(3)
+        values[0]: LITERAL(1)
+        values[1]: LITERAL(2)
+        values[2]: LITERAL(3)
         result: Var#3
     Iterator_Reset
         var: Var#3
@@ -28,7 +28,7 @@ Block#2
     Parent: Block#1
     Parent: Block#3
     Parent: Block#5
-    Phi<Var#4<$a>>: = [Var#1<$a>,Var#5<$a>,]
+    Var#4<$a> = Phi(Var#1<$a>, Var#5<$a>)
     Iterator_Valid
         var: Var#3
         result: Var#6
