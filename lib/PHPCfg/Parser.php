@@ -9,6 +9,8 @@
 
 namespace PHPCfg;
 
+use PHPCfg\Op\Stmt\Jump;
+use PHPCfg\Op\Stmt\JumpIf;
 use PHPCfg\Operand\Literal;
 use PHPCfg\Operand\Temporary;
 use PHPCfg\Operand\Variable;
@@ -451,29 +453,96 @@ class Parser {
         }
     }
 
-    protected function parseStmt_Switch(Stmt\Switch_ $node) {
+    private function switchCanUseJumptable(Stmt\Switch_ $node) {
+        foreach ($node->cases as $case) {
+            if (null !== $case->cond
+                    && !$case->cond instanceof Node\Scalar\LNumber
+                    && !$case->cond instanceof Node\Scalar\String_) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private function compileJumptableSwitch(Stmt\Switch_ $node) {
         $cond = $this->readVariable($this->parseExprNode($node->cond));
         $cases = [];
         $targets = [];
-        $block = false;
+        $block = null;
         $endBlock = new Block;
+        $defaultBlock = $endBlock;
         foreach ($node->cases as $case) {
-            $targets[] = $caseBlock = new Block($this->block);
+            $caseBlock = new Block($this->block);
             if ($block && !$block->dead) {
                 // wire up!
                 $block->children[] = new Op\Stmt\Jump($caseBlock);
                 $caseBlock->addParent($block);
             }
-            $cases[] = $this->parseExprNode($case->cond);
+
+            if ($case->cond) {
+                $targets[] = $caseBlock;
+                $cases[] = $this->parseExprNode($case->cond);
+            } else {
+                $defaultBlock = $caseBlock;
+            }
+
             $block = $this->parseNodes($case->stmts, $caseBlock);
         }
-        $this->block->children[] = new Op\Stmt\Switch_($cond, $cases, $targets, $this->mapAttributes($node));
+        $this->block->children[] = new Op\Stmt\Switch_(
+            $cond, $cases, $targets, $defaultBlock, $this->mapAttributes($node)
+        );
         if ($block && !$block->dead) {
             // wire end of block to endblock
             $block->children[] = new Op\Stmt\Jump($endBlock);
             $endBlock->addParent($block);
         }
-        $endBlock->addParent($this->block);
+        $this->block = $endBlock;
+    }
+
+    protected function parseStmt_Switch(Stmt\Switch_ $node) {
+        if ($this->switchCanUseJumptable($node)) {
+            $this->compileJumptableSwitch($node);
+            return;
+        }
+
+        // Desugar switch into compare-and-jump sequence
+        $cond = $this->parseExprNode($node->cond);
+        $endBlock = new Block;
+        $defaultBlock = $endBlock;
+        /** @var Block|null $prevBlock */
+        $prevBlock = null;
+        foreach ($node->cases as $case) {
+            $ifBlock = new Block;
+            if ($prevBlock && !$prevBlock->dead) {
+                $prevBlock->children[] = new Jump($ifBlock);
+                $ifBlock->addParent($prevBlock);
+            }
+
+            if ($case->cond) {
+                $caseExpr = $this->parseExprNode($case->cond);
+                $this->block->children[] = $cmp = new Op\Expr\BinaryOp\Equal(
+                    $this->readVariable($cond), $this->readVariable($caseExpr), $this->mapAttributes($case)
+                );
+
+                $elseBlock = new Block;
+                $this->block->children[] = new JumpIf($cmp->result, $ifBlock, $elseBlock);
+                $ifBlock->addParent($this->block);
+                $elseBlock->addParent($this->block);
+                $this->block = $elseBlock;
+            } else {
+                $defaultBlock = $ifBlock;
+            }
+
+            $prevBlock = $this->parseNodes($case->stmts, $ifBlock);
+        }
+
+        if ($prevBlock && !$prevBlock->dead) {
+            $prevBlock->children[] = new Jump($endBlock);
+            $endBlock->addParent($prevBlock);
+        }
+
+        $this->block->children[] = new Jump($defaultBlock);
+        $defaultBlock->addParent($this->block);
         $this->block = $endBlock;
     }
 
