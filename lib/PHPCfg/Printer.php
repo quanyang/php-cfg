@@ -16,11 +16,11 @@ use PHPCfg\Operand\Variable;
 
 abstract class Printer {
     /** @var \SplObjectStorage */
-    private $varIds;
+    public $varIds;
     /** @var \SplQueue */
-    private $blockQueue;
+    public $blockQueue;
     /** @var \SplObjectStorage */
-    private $blocks;
+    public $blocks;
 
     public function __construct() {
         $this->reset();

@@ -12,30 +12,77 @@ namespace PHPCfg\Printer;
 use PHPCfg\Printer;
 
 class Json extends Printer {
+
+    protected function renderVar(\PHPCfg\Operand $var) {
+        $type = isset($var->type) ? "<{$var->type}>" : "";
+        $result = array();
+        if (!empty($type)){
+            $result['type'] = $type;
+        }
+        if ($var->byRef){
+            $result['byRef'] = $var->byRef;
+        }
+        if ($var instanceof \PHPCfg\Operand\Literal) {
+            $result['value'] = "LITERAL{$type}(" . var_export($var->value, true) . ")";
+        } elseif ($var instanceof \PHPCfg\Operand\Variable) {
+            if ($var instanceof \PHPCfg\Operand\BoundVariable) {
+                switch ($var->scope) {
+                    case \PHPCfg\Operand\BoundVariable::SCOPE_GLOBAL:
+                    $result['scope'] = "global";
+                    break;
+                    case \PHPCfg\Operand\BoundVariable::SCOPE_LOCAL:
+                    $result['scope'] = "local";
+                    break;
+                    case \PHPCfg\Operand\BoundVariable::SCOPE_OBJECT:
+                    $result['scope'] = "this";
+                    break;
+                    case \PHPCfg\Operand\BoundVariable::SCOPE_FUNCTION:
+                    $result['scope'] = "static";
+                    break;
+                    default:
+                    throw new \LogicException("Unknown bound variable scope");
+                }
+            }
+            $result['var_name'] = $var->name->value;
+        } elseif ($var instanceof \PHPCfg\Operand\Temporary) {
+            $id = $this->getVarId($var);
+            $result['id'] = $id;
+            if ($var->original) {
+                $result = array_merge($result,$this->renderVar($var->original));
+            }
+        } elseif (is_array($var)) {
+            $result['type'] = "array" . $type;
+            foreach ($var as $k => $v) {
+                $result['vars'][$k] = $this->renderVar($v);
+            }
+        }
+        return $result;
+    }
+
     protected function renderOp(\PHPCfg\Op $op) {
-        $result = $op->getType();
+        $result['op'] = $op->getType();
         if ($op instanceof \PHPCfg\Op\CallableOp) {
             if (isset($op->name->value)) {
-                $result .= '<' . $op->name->value . '>';
+                $result['opName'] = $op->name->value;
             }
             foreach ($op->getParams() as $key => $param) {
-                $result .= $this->indent("\nparams: " . $this->renderOperand($param->result));
+                $result['params'][$key] = $this->renderVar($param->result);
             }
         }
         if ($op instanceof \PHPCfg\Op\Expr\Assertion) {
-            $result .= "<" . $this->renderAssertion($op->assertion) . ">";
-        }
+            $result['assertion'] = $this->renderAssertion($op->assertion);
+        }  
         foreach ($op->getVariableNames() as $varName) {
             $vars = $op->$varName;
-            if (!is_array($vars)) {
-                $vars = [$vars];
-            }
-            foreach ($vars as $var) {
-                if (!$var) {
-                    continue;
+            if (is_array($vars)) {
+                foreach ($vars as $key => $var) {
+                    if (!$var) {
+                        continue;
+                    }
+                    $result[$varName][$key] = str_replace(array("\n","\r",'"'),array('\\\\n','\\\\r','\\"'),$this->renderVar($var));
                 }
-                $result .= "\n    $varName: ";
-                $result .= str_replace(array("\n","\r",'"'),array('\\\\n','\\\\r','\\"'),$this->renderOperand($var));
+            } elseif ($vars) {
+                $result[$varName] = str_replace(array("\n","\r",'"'),array('\\\\n','\\\\r','\\"'),$this->renderVar($vars));
             }
         }
         $childBlocks = [];
@@ -66,23 +113,39 @@ class Json extends Printer {
         ];
     }
 
-    function splitOperand(array $operand) {
-        $expr = $operand[0];
-        $output = array();
-        $output['operand'] = $expr;
-        foreach ($operand as $val) {
-            $temp = array_map(trim,explode(":",$val,2));
-            if (count($temp)>1) {
-                if (isset($output[$temp[0]])) {
-                    $tmp = array($output[$temp[0]]);
-                    array_push($tmp,$temp[1]);
-                    $output[$temp[0]] = $tmp;
-                } else {
-                    $output[$temp[0]] = $temp[1];
-                }
-            }
+    protected function render(array $blocks) {
+        foreach ($blocks as $block) {
+            $this->enqueueBlock($block);
         }
-        return $output;
+        $renderedOps = new \SplObjectStorage;
+        $renderedBlocks = new \SplObjectStorage;
+        while ($this->blockQueue->count() > 0) {
+            $block = $this->blockQueue->dequeue();
+            $ops = [];
+            foreach ($block->phi as $phi) {
+                $result = $this->indent($this->renderOperand($phi->result) . " = Phi(");
+                $result .= implode(', ', array_map([$this, 'renderOperand'], $phi->vars));
+                $result .= ')';
+                $renderedOps[$phi] = $ops[] = [
+                    "op"          => $phi,
+                    "label"       => array("op"=>$result),
+                    "childBlocks" => [],
+                ];
+            }
+            foreach ($block->children as $child) {
+                $renderedOps[$child] = $ops[] = $this->renderOp($child);
+            }
+            $renderedBlocks[$block] = $ops;
+        }
+        $varIds = $this->varIds;
+        $blockIds = $this->blocks;
+        $this->reset();
+        return [
+            "blocks"   => $renderedBlocks,
+            "ops"      => $renderedOps,
+            "varIds"   => $varIds,
+            "blockIds" => $blockIds,
+        ];
     }
 
     public function printCFG(array $blocks) {
@@ -99,8 +162,8 @@ class Json extends Printer {
             }
             $block_['blockId'] = $rendered['blockIds'][$block];
             $operand_= array();
-            foreach ($ops as $op) { 
-                $operand = $this->splitOperand(split("\n",$op['label']));
+            foreach ($ops as $op) {
+                $operand=$op['label'];
                 if ($attributes = $op['attributes']){
                     $operand['startLine'] = $attributes['startLine'];
                     $operand['endLine'] = $attributes['endLine'];
@@ -115,9 +178,9 @@ class Json extends Printer {
                         if (!is_array($operand[$child['name']])) {
                             $operand[$child['name']] = array($operand[$child['name']]);
                         }
-                        array_push($operand[$child['name']],"Block#" . $rendered['blockIds'][$child['block']]);
+                        array_push($operand[$child['name']], $rendered['blockIds'][$child['block']]);
                     } else {
-                        $operand[$child['name']] = "Block#" . $rendered['blockIds'][$child['block']];
+                        $operand[$child['name']] = $rendered['blockIds'][$child['block']];
                     }
                 }
                 array_push($operand_,$operand);
