@@ -64,7 +64,7 @@ class Json extends Printer {
             $result['var_name'] = $var->name->value;
         } elseif ($var instanceof \PHPCfg\Operand\Temporary) {
             $id = $this->getVarId($var);
-            $result['id'] = $id;
+            $result['id'] = ''.$id;
             if ($var->original) {
                 $result = array_merge($result,$this->renderVar($var->original));
             }
@@ -139,7 +139,7 @@ class Json extends Printer {
                 $result .= ')';
                 $renderedOps[$phi] = $ops[] = [
                     "op"          => $phi,
-                    "label"       => array("op"=>$result),
+                    "label"       => array("op"=>$result,"result" => $this->renderVar($phi->result),"vars" =>array_map([$this, 'renderVar'], $phi->vars)),
                     "childBlocks" => [],
                     ];
             }
