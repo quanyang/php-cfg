@@ -9,9 +9,27 @@
 
 namespace PHPCfg\Printer;
 
+use PHPCfg\Func;
 use PHPCfg\Printer;
+use PHPCfg\Script;
+use phpDocumentor\GraphViz\Edge;
+use phpDocumentor\GraphViz\Graph;
+use phpDocumentor\GraphViz\Node;
 
 class Json extends Printer {
+    public function printScript(Script $script) {
+
+        $output['main']=$this->printCFG($script->main);
+        foreach ($script->functions as $func) {
+            $scope = $func->class ? $func->class->value . '::' : '';
+            $name = "$scope$func->name()";
+            $output[$name] = $this->printCFG($func);
+        }
+        return $output;
+    }
+
+    public function printFunc(Func $func) {
+    }
 
     protected function renderVar(\PHPCfg\Operand $var) {
         $type = isset($var->type) ? "<{$var->type}>" : "";
@@ -62,12 +80,7 @@ class Json extends Printer {
     protected function renderOp(\PHPCfg\Op $op) {
         $result['op'] = $op->getType();
         if ($op instanceof \PHPCfg\Op\CallableOp) {
-            if (isset($op->name->value)) {
-                $result['opName'] = $op->name->value;
-            }
-            foreach ($op->getParams() as $key => $param) {
-                $result['params'][$key] = $this->renderVar($param->result);
-            }
+            $result['opName'] = (String) $op->getFunc()->name;
         }
         if ($op instanceof \PHPCfg\Op\Expr\Assertion) {
             $result['assertion'] = $this->renderAssertion($op->assertion);
@@ -113,10 +126,8 @@ class Json extends Printer {
         ];
     }
 
-    protected function render(array $blocks) {
-        foreach ($blocks as $block) {
-            $this->enqueueBlock($block);
-        }
+    protected function render(Func $blocks) {
+        $this->enqueueBlock($blocks->cfg);
         $renderedOps = new \SplObjectStorage;
         $renderedBlocks = new \SplObjectStorage;
         while ($this->blockQueue->count() > 0) {
@@ -130,7 +141,7 @@ class Json extends Printer {
                     "op"          => $phi,
                     "label"       => array("op"=>$result,"result" => $this->renderVar($phi->result),"vars" =>array_map([$this, 'renderVar'], $phi->vars)),
                     "childBlocks" => [],
-                ];
+                    ];
             }
             foreach ($block->children as $child) {
                 $renderedOps[$child] = $ops[] = $this->renderOp($child);
@@ -141,14 +152,14 @@ class Json extends Printer {
         $blockIds = $this->blocks;
         $this->reset();
         return [
-            "blocks"   => $renderedBlocks,
-            "ops"      => $renderedOps,
-            "varIds"   => $varIds,
-            "blockIds" => $blockIds,
+        "blocks"   => $renderedBlocks,
+        "ops"      => $renderedOps,
+        "varIds"   => $varIds,
+        "blockIds" => $blockIds,
         ];
     }
 
-    public function printCFG(array $blocks) {
+    public function printCFG(Func $blocks) {
         $rendered = $this->render($blocks);
         $blocks = array();
         foreach ($rendered['blocks'] as $block) {
@@ -191,7 +202,7 @@ class Json extends Printer {
         return $blocks;
     }
 
-    function printVars(array $blocks) {
+    function printVars(\PHPCfg\Func $blocks) {
 
     }
 }
