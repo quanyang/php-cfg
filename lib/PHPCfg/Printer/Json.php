@@ -126,13 +126,18 @@ class Json extends Printer {
         ];
     }
 
-    protected function render(Func $blocks) {
-        $this->enqueueBlock($blocks->cfg);
+    protected function render(Func $func) {
+        $this->enqueueBlock($func->cfg);
         $renderedOps = new \SplObjectStorage;
         $renderedBlocks = new \SplObjectStorage;
         while ($this->blockQueue->count() > 0) {
             $block = $this->blockQueue->dequeue();
             $ops = [];
+            if ($block === $func->cfg) {
+                foreach ($func->params as $param) {
+                    $renderedOps[$param] = $ops[] = $this->renderOp($param);
+                }
+            }
             foreach ($block->phi as $phi) {
                 $result = $this->indent($this->renderOperand($phi->result) . " = Phi(");
                 $result .= implode(', ', array_map([$this, 'renderOperand'], $phi->vars));
