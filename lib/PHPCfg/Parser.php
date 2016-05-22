@@ -32,11 +32,9 @@ class Parser {
     protected $astParser;
     protected $astTraverser;
     protected $fileName;
-    /** @var Block[] */
-    protected $labels = [];
-    protected $scope;
-    protected $incompletePhis;
-    protected $complete = false;
+
+    /** @var FuncContext */
+    protected $ctx;
 
     /** @var Literal|null */
     protected $currentClass = null;
@@ -54,8 +52,6 @@ class Parser {
         $this->astTraverser->addVisitor(new AstVisitor\NameResolver);
         $this->astTraverser->addVisitor(new AstVisitor\LoopResolver);
         $this->astTraverser->addVisitor(new AstVisitor\MagicStringResolver);
-        $this->scope = new \SplObjectStorage;
-        $this->incompletePhis = new \SplObjectStorage;
     }
 
     /**
@@ -82,17 +78,12 @@ class Parser {
     }
 
     protected function parseFunc(Func $func, array $params, array $stmts, $implicitReturnValue) {
-        // Back up function specific structures
-        $prevScope = $this->scope;
-        $prevIncompletePhis = $this->incompletePhis;
-        $prevLabels = $this->labels;
-        $this->scope = new \SplObjectStorage;
-        $this->incompletePhis = new \SplObjectStorage;
-        $this->labels = [];
+        // Switch to new function context
+        $prevCtx = $this->ctx;
+        $this->ctx = new FuncContext;
 
         $start = $func->cfg;
 
-        $this->complete = false;
         $func->params = $this->parseParameterList($func, $params);
         foreach ($func->params as $param) {
             $this->writeVariableName($param->name->value, $param->result, $start);
@@ -102,11 +93,15 @@ class Parser {
         if (!$end->dead) {
             $end->children[] = new Return_(new Literal($implicitReturnValue));
         }
-        $this->complete = true;
 
-        foreach ($this->incompletePhis as $block) {
+        if ($this->ctx->unresolvedGotos) {
+            $this->throwUndefinedLabelError();
+        }
+
+        $this->ctx->complete = true;
+        foreach ($this->ctx->incompletePhis as $block) {
             /** @var Op\Phi $phi */
-            foreach ($this->incompletePhis[$block] as $name => $phi) {
+            foreach ($this->ctx->incompletePhis[$block] as $name => $phi) {
                 // add phi operands
                 foreach ($block->parents as $parent) {
                     if ($parent->dead) {
@@ -119,9 +114,7 @@ class Parser {
             }
         }
 
-        $this->scope = $prevScope;
-        $this->incompletePhis = $prevIncompletePhis;
-        $this->labels = $prevLabels;
+        $this->ctx = $prevCtx;
     }
 
     public function parseNodes(array $nodes, Block $block) {
@@ -338,11 +331,14 @@ class Parser {
     }
 
     protected function parseStmt_Goto(Stmt\Goto_ $node) {
-        if (!isset($this->labels[$node->name])) {
-            $this->labels[$node->name] = new Block;
+        $attributes = $this->mapAttributes($node);
+        if (isset($this->ctx->labels[$node->name])) {
+            $labelBlock = $this->ctx->labels[$node->name];
+            $this->block->children[] = new Jump($labelBlock, $attributes);
+            $labelBlock->addParent($this->block);
+        } else {
+            $this->ctx->unresolvedGotos[$node->name][] = [$this->block, $attributes];
         }
-        $this->block->children[] = new Jump($this->labels[$node->name], $this->mapAttributes($node));
-        $this->labels[$node->name]->addParent($this->block);
         $this->block = new Block;
         $this->block->dead = true;
     }
@@ -410,18 +406,34 @@ class Parser {
     }
 
     protected function parseStmt_Label(Stmt\Label $node) {
-        if (!isset($this->labels[$node->name])) {
-            $this->labels[$node->name] = new Block;
+        if (isset($this->ctx->labels[$node->name])) {
+            throw new \RuntimeException("Label '$node->name' already defined");
         }
-        $this->block->children[] = new Jump($this->labels[$node->name], $this->mapAttributes($node));
-        $this->labels[$node->name]->addParent($this->block);
-        $this->block = $this->labels[$node->name];
-        assert(empty($this->block->children));
+
+        $labelBlock = new Block;
+        $this->block->children[] = new Jump($labelBlock, $this->mapAttributes($node));
+        $labelBlock->addParent($this->block);
+        if (isset($this->ctx->unresolvedGotos[$node->name])) {
+            /**
+             * @var Block $block
+             * @var array $attributes
+             */
+            foreach ($this->ctx->unresolvedGotos[$node->name] as list($block, $attributes)) {
+                $block->children[] = new Op\Stmt\Jump($labelBlock, $attributes);
+                $labelBlock->addParent($block);
+            }
+            unset($this->ctx->unresolvedGotos[$node->name]);
+        }
+        $this->block = $this->ctx->labels[$node->name] = $labelBlock;
     }
 
     protected function parseStmt_Namespace(Stmt\Namespace_ $node) {
         $this->currentNamespace = $node->name;
         $this->parseNodes($node->stmts, $this->block);
+    }
+
+    protected function parseStmt_Nop(Stmt\Nop $node) {
+        // Nothing to see here, move along
     }
 
     protected function parseStmt_Property(Stmt\Property $node) {
@@ -1281,18 +1293,18 @@ class Parser {
     }
 
     private function readVariableName($name, Block $block) {
-        if ($this->isLocalVariable($name, $block)) {
-            return $this->scope[$block][$name];
+        if ($this->ctx->isLocalVariable($block, $name)) {
+            return $this->ctx->scope[$block][$name];
         }
         return $this->readVariableRecursive($name, $block);
     }
 
     private function writeVariableName($name, Operand $value, Block $block) {
-        $this->writeKeyToArray("scope", $block, $name, $value);
+        $this->ctx->setValueInScope($block, $name, $value);
     }
 
     private function readVariableRecursive($name, Block $block) {
-        if ($this->complete) {
+        if ($this->ctx->complete) {
             if (count($block->parents) === 1 && !$block->parents[0]->dead) {
                 // Special case, just return the read var
                 return $this->readVariableName($name, $block->parents[0]);
@@ -1313,29 +1325,9 @@ class Parser {
         }
         $var = new Operand\Temporary(new Variable(new Literal($name)));
         $phi = new Op\Phi($var, ["block" => $block]);
-        $this->writeKeyToArray("incompletePhis", $block, $name, $phi);
+        $this->ctx->addToIncompletePhis($block, $name, $phi);
         $this->writeVariableName($name, $var, $block);
         return $var;
-    }
-
-    private function writeKeyToArray($name, $first, $second, $value) {
-        if (!$this->$name->offsetExists($first)) {
-            $this->$name->offsetSet($first, []);
-        }
-        $array = $this->$name->offsetGet($first);
-        $array[$second] = $value;
-        $this->$name->offsetSet($first, $array);
-        return $value;
-    }
-
-    private function isLocalVariable($name, Block $block) {
-        if (isset($this->scope[$block])) {
-            $vars = $this->scope[$block];
-            if (isset($vars[$name])) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private function getVariableName(Operand\Variable $var) {
@@ -1373,4 +1365,9 @@ class Parser {
         return new $assert($vars, $assert->mode);
     }
 
+    protected function throwUndefinedLabelError() {
+        foreach ($this->ctx->unresolvedGotos as $name => $_) {
+            throw new \RuntimeException("'goto' to undefined label '$name'");
+        }
+    }
 }
