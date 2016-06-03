@@ -1112,24 +1112,38 @@ class Parser {
         $ifBlock = $this->block->create();
         $elseBlock = $this->block->create();
         $endBlock = $this->block->create();
-        $result = new Temporary;
         $this->block->children[] = new JumpIf($cond, $ifBlock, $elseBlock, $attrs);
         $this->processAssertions($cond, $ifBlock, $elseBlock);
         $ifBlock->addParent($this->block);
         $elseBlock->addParent($this->block);
+
         $this->block = $ifBlock;
+        $ifVar = new Temporary;
         if ($expr->if) {
-            $this->block->children[] = new Op\Expr\Assign($result, $this->parseExprNode($expr->if), $attrs);
+            $this->block->children[] = new Op\Expr\Assign(
+                $ifVar, $this->readVariable($this->parseExprNode($expr->if)), $attrs
+            );
         } else {
-            $this->block->children[] = new Op\Expr\Assign($result, $cond, $attrs);
+            $this->block->children[] = new Op\Expr\Assign($ifVar, $cond, $attrs);
         }
         $this->block->children[] = new Jump($endBlock, $attrs);
-        $elseBlock->addParent($this->block);
+        $endBlock->addParent($this->block);
+
         $this->block = $elseBlock;
-        $this->block->children[] = new Op\Expr\Assign($result, $this->parseExprNode($expr->else), $attrs);
-        $elseBlock->children[] = new Jump($endBlock, $attrs);
-        $endBlock->addParent($elseBlock);
+        $elseVar = new Temporary;
+        $this->block->children[] = new Op\Expr\Assign(
+            $elseVar, $this->readVariable($this->parseExprNode($expr->else)), $attrs
+        );
+        $this->block->children[] = new Jump($endBlock, $attrs);
+        $endBlock->addParent($this->block);
+
         $this->block = $endBlock;
+        $result = new Temporary;
+        $phi = new Op\Phi($result, ['block' => $this->block]);
+        $phi->addOperand($ifVar);
+        $phi->addOperand($elseVar);
+        $this->block->phi[] = $phi;
+
         return $result;
     }
 
@@ -1280,7 +1294,12 @@ class Parser {
             return $var;
         }
         if ($var instanceof Operand\Variable) {
-            return $this->readVariableName($this->getVariableName($var), $this->block);
+            if ($var->name instanceof Literal) {
+                return $this->readVariableName($this->getVariableName($var), $this->block);
+            } else {
+                $this->readVariable($var->name);    // variable variable read - all we can do is register the nested read
+                return $var;
+            }
         }
         if ($var instanceof Operand\Temporary && $var->original instanceof Operand) {
             return $this->readVariable($var->original);
@@ -1293,9 +1312,13 @@ class Parser {
             $var = $var->original;
         }
         if ($var instanceof Operand\Variable) {
-            $name = $this->getVariableName($var);
-            $var = new Operand\Temporary($var);
-            $this->writeVariableName($name, $var, $this->block);
+            if ($var->name instanceof Literal) {
+                $name = $this->getVariableName($var);
+                $var = new Operand\Temporary($var);
+                $this->writeVariableName($name, $var, $this->block);
+            } else {
+                $this->readVariable($var->name);    // variable variable write - do not resolve the write for now, but we can register the read 
+            }
         }
         return $var;
     }
